@@ -98,6 +98,8 @@ const allowedChars =
 
 const keyInput = document.getElementById("keyInput");
 
+keyInput.value = localStorage.getItem("blockEncoderKey") ?? "";
+
 function hashString(str) {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < str.length; i++) {
@@ -214,10 +216,12 @@ const encodedOutput = document.getElementById("encodedOutput");
 const decodedOutput = document.getElementById("decodedOutput");
 
 document.getElementById("encodeBtn").onclick = () => {
+  localStorage.setItem("blockEncoderKey", keyInput.value);
   encodedOutput.value = encodeToBlocks(textInput.value);
 };
 
 document.getElementById("decodeBtn").onclick = () => {
+  localStorage.setItem("blockEncoderKey", keyInput.value);
   decodedOutput.value = decodeFromBlocks(encodedOutput.value);
 };
 
