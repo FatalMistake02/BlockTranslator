@@ -65,52 +65,79 @@ const allowedChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 // Map from block to index for decoding
 const blockToIndex = Object.fromEntries(blockChars.map((b,i)=>[b,i]));
 
-// --- Encode string to blocks ---
 function encodeToBlocks(input) {
   const bitsPerChar = Math.ceil(Math.log2(allowedChars.length));
   const bitsPerBlock = Math.floor(Math.log2(blockChars.length));
+
   let bitBuffer = 0;
   let bitLength = 0;
   let result = "";
 
+  function flush() {
+    if (bitLength > 0) {
+      const blockIndex =
+        (bitBuffer << (bitsPerBlock - bitLength)) & ((1 << bitsPerBlock) - 1);
+      result += blockChars[blockIndex];
+      bitBuffer = 0;
+      bitLength = 0;
+    }
+  }
+
   for (const c of input) {
     const val = allowedChars.indexOf(c);
-    if (val === -1) throw new Error(`Character "${c}" not allowed`);
+
+    if (val === -1) {
+      // Flush pending encoded bits BEFORE passthrough
+      flush();
+      result += c;
+      continue;
+    }
+
     bitBuffer = (bitBuffer << bitsPerChar) | val;
     bitLength += bitsPerChar;
 
     while (bitLength >= bitsPerBlock) {
       bitLength -= bitsPerBlock;
-      const blockIndex = (bitBuffer >> bitLength) & ((1 << bitsPerBlock) - 1);
+      const blockIndex =
+        (bitBuffer >> bitLength) & ((1 << bitsPerBlock) - 1);
       result += blockChars[blockIndex];
     }
   }
 
-  if (bitLength > 0) {
-    const blockIndex = (bitBuffer << (bitsPerBlock - bitLength)) & ((1 << bitsPerBlock) - 1);
-    result += blockChars[blockIndex];
-  }
-
+  flush();
   return result;
 }
 
-// --- Decode blocks back to string ---
 function decodeFromBlocks(blockString) {
-  const bitsPerChar = Math.ceil(Math.log2(allowedChars.length)); // 6 bits
+  const bitsPerChar = Math.ceil(Math.log2(allowedChars.length));
   const bitsPerBlock = Math.floor(Math.log2(blockChars.length));
+
   let bitBuffer = 0;
   let bitLength = 0;
   let result = "";
 
+  function flush() {
+    bitBuffer = 0;
+    bitLength = 0;
+  }
+
   for (const b of blockString) {
     const val = blockToIndex[b];
-    if (val === undefined) throw new Error(`Block "${b}" not recognized`);
+
+    if (val === undefined) {
+      // Flush pending decoded bits BEFORE passthrough
+      flush();
+      result += b;
+      continue;
+    }
+
     bitBuffer = (bitBuffer << bitsPerBlock) | val;
     bitLength += bitsPerBlock;
 
     while (bitLength >= bitsPerChar) {
       bitLength -= bitsPerChar;
-      const charIndex = (bitBuffer >> bitLength) & ((1 << bitsPerChar) - 1);
+      const charIndex =
+        (bitBuffer >> bitLength) & ((1 << bitsPerChar) - 1);
       result += allowedChars[charIndex];
     }
   }
