@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Custom Block Encoder/Decoder</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; max-width: 700px; margin: auto; }
+  input, textarea, button { width: 100%; margin: 5px 0; padding: 8px; font-size: 16px; }
+  textarea { resize: vertical; height: 60px; }
+  button { cursor: pointer; }
+  label { font-weight: bold; margin-top: 10px; display: block; }
+</style>
+</head>
+<body>
+
+<h2>Custom Block Encoder / Decoder</h2>
+
+<label for="textInput">Text to Encode:</label>
+<textarea id="textInput" placeholder="Type letters, digits, !@#$%^&*()-_=+/?.,"></textarea>
+<button id="encodeBtn">Encode → Blocks</button>
+
+<label for="encodedOutput">Encoded Blocks:</label>
+<textarea id="encodedOutput" placeholder="Encoded block string"></textarea>
+<button id="decodeBtn">Decode → Text</button>
+
+<label for="decodedOutput">Decoded Text:</label>
+<textarea id="decodedOutput" placeholder="Decoded text appears here"></textarea>
+
+<script>
+// --- Paste your large blockChars array here ---
+const blockChars = [
+  // Block Elements U+2580–U+259F
+  "▀","▁","▂","▃","▄","▅","▆","▇","█","▉","▊","▋","▌","▍","▎","▏",
+  "▐","░","▒","▓","▔","▕","▖","▗","▘","▙","▚","▛","▜","▝","▞","▟",
+  // Box Drawing U+2500–U+257F (common visible ones)
+  "─","│","┌","┐","└","┘","├","┤","┬","┴","┼","═","║","╔","╗","╚","╝","╠","╣","╦","╩","╬",
+  // Geometric Shapes U+25A0–U+25FF (selected)
+  "■","□","▢","▣","▤","▥","▦","▧","▨","▩","▪","▫","▬","▭","▮","▯",
+  "▲","△","▴","▵","▶","▷","▸","▹","▼","▽","▾","▿","◀","◁","◂","◃",
+  "◆","◇","◈","◉","◊","○","◌","◍","◐","◑","◒","◓","◔","◕","◖","◗",
+  "◘","◙","◚","◛","◜","◝","◞","◟","◠","◡","◢","◣","◤","◥","◦","◧",
+  "◨","◩","◪","◫","◬","◭","◮","◯",
+  // Braille Patterns U+2800–U+28FF (all 256)
+  "⠀","⠁","⠂","⠃","⠄","⠅","⠆","⠇","⠈","⠉","⠊","⠋","⠌","⠍","⠎","⠏",
+  "⠐","⠑","⠒","⠓","⠔","⠕","⠖","⠗","⠘","⠙","⠚","⠛","⠜","⠝","⠞","⠟",
+  "⠠","⠡","⠢","⠣","⠤","⠥","⠦","⠧","⠨","⠩","⠪","⠫","⠬","⠭","⠮","⠯",
+  "⠰","⠱","⠲","⠳","⠴","⠵","⠶","⠷","⠸","⠹","⠺","⠻","⠼","⠽","⠾","⠿",
+  "⡀","⡁","⡂","⡃","⡄","⡅","⡆","⡇","⡈","⡉","⡊","⡋","⡌","⡍","⡎","⡏",
+  "⡐","⡑","⡒","⡓","⡔","⡕","⡖","⡗","⡘","⡙","⡚","⡛","⡜","⡝","⡞","⡟",
+  "⡠","⡡","⡢","⡣","⡤","⡥","⡦","⡧","⡨","⡩","⡪","⡫","⡬","⡭","⡮","⡯",
+  "⡰","⡱","⡲","⡳","⡴","⡵","⡶","⡷","⡸","⡹","⡺","⡻","⡼","⡽","⡾","⡿",
+  "⢀","⢁","⢂","⢃","⢄","⢅","⢆","⢇","⢈","⢉","⢊","⢋","⢌","⢍","⢎","⢏",
+  "⢐","⢑","⢒","⢓","⢔","⢕","⢖","⢗","⢘","⢙","⢚","⢛","⢜","⢝","⢞","⢟",
+  "⢠","⢡","⢢","⢣","⢤","⢥","⢦","⢧","⢨","⢩","⢪","⢫","⢬","⢭","⢮","⢯",
+  "⢰","⢱","⢲","⢳","⢴","⢵","⢶","⢷","⢸","⢹","⢺","⢻","⢼","⢽","⢾","⢿",
+  "⣀","⣁","⣂","⣃","⣄","⣅","⣆","⣇","⣈","⣉","⣊","⣋","⣌","⣍","⣎","⣏",
+  "⣐","⣑","⣒","⣓","⣔","⣕","⣖","⣗","⣘","⣙","⣚","⣛","⣜","⣝","⣞","⣟",
+  "⣠","⣡","⣢","⣣","⣤","⣥","⣦","⣧","⣨","⣩","⣪","⣫","⣬","⣭","⣮","⣯",
+  "⣰","⣱","⣲","⣳","⣴","⣵","⣶","⣷","⣸","⣹","⣺","⣻","⣼","⣽","⣾","⣿"
+];
+
+// Allowed input characters
+const allowedChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+/?. ";
+
+// Map from block to index for decoding
+const blockToIndex = Object.fromEntries(blockChars.map((b,i)=>[b,i]));
+
+// --- Encode string to blocks ---
+function encodeToBlocks(input) {
+  const bitsPerChar = Math.ceil(Math.log2(allowedChars.length));
+  const bitsPerBlock = Math.floor(Math.log2(blockChars.length));
+  let bitBuffer = 0;
+  let bitLength = 0;
+  let result = "";
+
+  for (const c of input) {
+    const val = allowedChars.indexOf(c);
+    if (val === -1) throw new Error(`Character "${c}" not allowed`);
+    bitBuffer = (bitBuffer << bitsPerChar) | val;
+    bitLength += bitsPerChar;
+
+    while (bitLength >= bitsPerBlock) {
+      bitLength -= bitsPerBlock;
+      const blockIndex = (bitBuffer >> bitLength) & ((1 << bitsPerBlock) - 1);
+      result += blockChars[blockIndex];
+    }
+  }
+
+  if (bitLength > 0) {
+    const blockIndex = (bitBuffer << (bitsPerBlock - bitLength)) & ((1 << bitsPerBlock) - 1);
+    result += blockChars[blockIndex];
+  }
+
+  return result;
+}
+
+// --- Decode blocks back to string ---
+function decodeFromBlocks(blockString) {
+  const bitsPerChar = Math.ceil(Math.log2(allowedChars.length)); // 6 bits
+  const bitsPerBlock = Math.floor(Math.log2(blockChars.length));
+  let bitBuffer = 0;
+  let bitLength = 0;
+  let result = "";
+
+  for (const b of blockString) {
+    const val = blockToIndex[b];
+    if (val === undefined) throw new Error(`Block "${b}" not recognized`);
+    bitBuffer = (bitBuffer << bitsPerBlock) | val;
+    bitLength += bitsPerBlock;
+
+    while (bitLength >= bitsPerChar) {
+      bitLength -= bitsPerChar;
+      const charIndex = (bitBuffer >> bitLength) & ((1 << bitsPerChar) - 1);
+      result += allowedChars[charIndex];
+    }
+  }
+
+  return result;
+}
+
+// --- DOM Elements ---
+const textInput = document.getElementById("textInput");
+const encodedOutput = document.getElementById("encodedOutput");
+const decodedOutput = document.getElementById("decodedOutput");
+const encodeBtn = document.getElementById("encodeBtn");
+const decodeBtn = document.getElementById("decodeBtn");
+
+// --- Event Listeners ---
+encodeBtn.addEventListener("click", () => {
+  try {
+    const encoded = encodeToBlocks(textInput.value);
+    encodedOutput.value = encoded;
+    decodedOutput.value = "";
+  } catch(e) {
+    alert(e.message);
+  }
+});
+
+decodeBtn.addEventListener("click", () => {
+  try {
+    const decoded = decodeFromBlocks(encodedOutput.value);
+    decodedOutput.value = decoded;
+  } catch(e) {
+    alert(e.message);
+  }
+});
+</script>
+
+</body>
+</html>
