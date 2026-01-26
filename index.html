@@ -100,27 +100,31 @@ const keyInput = document.getElementById("keyInput");
 
 keyInput.value = localStorage.getItem("blockEncoderKey") ?? "";
 
-function hashString(str) {
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
+async function sha256ToOffset(str, mod) {
+  const data = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+
+  // Convert first 8 bytes to 64-bit integer
+  const view = new DataView(hash);
+  const high = BigInt(view.getUint32(0));
+  const low  = BigInt(view.getUint32(4));
+  const value = (high << 32n) | low;
+
+  return Number(value % BigInt(mod));
 }
 
-function getKeyedBlockChars() {
+async function getKeyedBlockChars() {
   const key = keyInput.value || "";
   if (!key) return blockChars;
 
-  const offset = hashString(key) % blockChars.length;
+  const offset = (await sha256ToOffset(key, 500)) % blockChars.length;
   return blockChars.slice(offset).concat(blockChars.slice(0, offset));
 }
 
 // ================= ENCODE =================
 
-function encodeToBlocks(input) {
-  const keyedBlocks = getKeyedBlockChars();
+async function encodeToBlocks(input) {
+  const keyedBlocks = await getKeyedBlockChars();
 
   const bitsPerChar = Math.ceil(Math.log2(allowedChars.length));
   const bitsPerBlock = Math.floor(Math.log2(keyedBlocks.length));
@@ -167,8 +171,8 @@ function encodeToBlocks(input) {
 
 // ================= DECODE =================
 
-function decodeFromBlocks(str) {
-  const keyedBlocks = getKeyedBlockChars();
+async function decodeFromBlocks(str) {
+  const keyedBlocks = await getKeyedBlockChars();
   const keyedBlockToIndex = Object.fromEntries(
     keyedBlocks.map((b, i) => [b, i])
   );
@@ -215,14 +219,14 @@ const textInput = document.getElementById("textInput");
 const encodedOutput = document.getElementById("encodedOutput");
 const decodedOutput = document.getElementById("decodedOutput");
 
-document.getElementById("encodeBtn").onclick = () => {
+document.getElementById("encodeBtn").onclick = async () => {
   localStorage.setItem("blockEncoderKey", keyInput.value);
-  encodedOutput.value = encodeToBlocks(textInput.value);
+  encodedOutput.value = await encodeToBlocks(textInput.value);
 };
 
-document.getElementById("decodeBtn").onclick = () => {
+document.getElementById("decodeBtn").onclick = async () => {
   localStorage.setItem("blockEncoderKey", keyInput.value);
-  decodedOutput.value = decodeFromBlocks(encodedOutput.value);
+  decodedOutput.value = await decodeFromBlocks(encodedOutput.value);
 };
 
 document.getElementById("copyEncodedBtn").onclick = () => {
