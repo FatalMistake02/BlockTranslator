@@ -2,32 +2,63 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Custom Block Encoder/Decoder</title>
+<title>Block Encoder / Decoder (Keyed)</title>
+
 <style>
-  body { font-family: sans-serif; padding: 20px; max-width: 700px; margin: auto; }
-  input, textarea, button { width: 100%; margin: 5px 0; padding: 8px; font-size: 16px; }
-  textarea { resize: vertical; height: 60px; }
-  button { cursor: pointer; }
-  label { font-weight: bold; margin-top: 10px; display: block; }
+body {
+  font-family: sans-serif;
+  max-width: 720px;
+  margin: auto;
+  padding: 20px;
+}
+
+textarea, input, button {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  font-size: 16px;
+}
+
+textarea {
+  height: 80px;
+}
+
+label {
+  margin-top: 12px;
+  display: block;
+  font-weight: bold;
+}
 </style>
 </head>
+
 <body>
 
-<h2>Custom Block Encoder / Decoder</h2>
+<h2>Block Encoder / Decoder (with Key)</h2>
 
-<label for="textInput">Text to Encode:</label>
-<textarea id="textInput" placeholder="Type letters, digits, !@#$%^&*()-_=+/?.,"></textarea>
-<button id="encodeBtn">Encode → Blocks</button>
+<label>Encryption Key (optional)</label>
+<input id="keyInput" placeholder="Enter key">
 
-<label for="encodedOutput">Encoded Blocks:</label>
-<textarea id="encodedOutput" placeholder="Encoded block string"></textarea>
-<button id="decodeBtn">Decode → Text</button>
+<label>Text to Encode</label>
+<textarea id="textInput"></textarea>
 
-<label for="decodedOutput">Decoded Text:</label>
-<textarea id="decodedOutput" placeholder="Decoded text appears here"></textarea>
+<button id="encodeBtn">Encode</button>
+
+<label>Encoded Blocks</label>
+<textarea id="encodedOutput"></textarea>
+
+<button id="copyEncodedBtn">Copy Encoded</button>
+
+<button id="decodeBtn">Decode</button>
+
+<label>Decoded Text</label>
+<textarea id="decodedOutput"></textarea>
+
+<button id="copyDecodedBtn">Copy Decoded</button>
 
 <script>
-// --- Paste your large blockChars array here ---
+// ================= CONFIG =================
+
+// Paste your big blockChars array here
 const blockChars = [
   // Block Elements U+2580–U+259F
   "▀","▁","▂","▃","▄","▅","▆","▇","█","▉","▊","▋","▌","▍","▎","▏",
@@ -59,15 +90,38 @@ const blockChars = [
   "⣰","⣱","⣲","⣳","⣴","⣵","⣶","⣷","⣸","⣹","⣺","⣻","⣼","⣽","⣾","⣿"
 ];
 
-// Allowed input characters
-const allowedChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+/?. ";
+// Allowed characters (expand as desired)
+const allowedChars =
+"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 !@#$%^&*()-_=+/?.,:\"'<>[]{}\\|;\n\t";
 
-// Map from block to index for decoding
-const blockToIndex = Object.fromEntries(blockChars.map((b,i)=>[b,i]));
+// ================= UTIL =================
+
+const keyInput = document.getElementById("keyInput");
+
+function hashString(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function getKeyedBlockChars() {
+  const key = keyInput.value || "";
+  if (!key) return blockChars;
+
+  const offset = hashString(key) % blockChars.length;
+  return blockChars.slice(offset).concat(blockChars.slice(0, offset));
+}
+
+// ================= ENCODE =================
 
 function encodeToBlocks(input) {
+  const keyedBlocks = getKeyedBlockChars();
+
   const bitsPerChar = Math.ceil(Math.log2(allowedChars.length));
-  const bitsPerBlock = Math.floor(Math.log2(blockChars.length));
+  const bitsPerBlock = Math.floor(Math.log2(keyedBlocks.length));
 
   let bitBuffer = 0;
   let bitLength = 0;
@@ -75,9 +129,10 @@ function encodeToBlocks(input) {
 
   function flush() {
     if (bitLength > 0) {
-      const blockIndex =
-        (bitBuffer << (bitsPerBlock - bitLength)) & ((1 << bitsPerBlock) - 1);
-      result += blockChars[blockIndex];
+      const idx =
+        (bitBuffer << (bitsPerBlock - bitLength)) &
+        ((1 << bitsPerBlock) - 1);
+      result += keyedBlocks[idx];
       bitBuffer = 0;
       bitLength = 0;
     }
@@ -87,7 +142,6 @@ function encodeToBlocks(input) {
     const val = allowedChars.indexOf(c);
 
     if (val === -1) {
-      // Flush pending encoded bits BEFORE passthrough
       flush();
       result += c;
       continue;
@@ -98,9 +152,10 @@ function encodeToBlocks(input) {
 
     while (bitLength >= bitsPerBlock) {
       bitLength -= bitsPerBlock;
-      const blockIndex =
-        (bitBuffer >> bitLength) & ((1 << bitsPerBlock) - 1);
-      result += blockChars[blockIndex];
+      const idx =
+        (bitBuffer >> bitLength) &
+        ((1 << bitsPerBlock) - 1);
+      result += keyedBlocks[idx];
     }
   }
 
@@ -108,9 +163,16 @@ function encodeToBlocks(input) {
   return result;
 }
 
-function decodeFromBlocks(blockString) {
+// ================= DECODE =================
+
+function decodeFromBlocks(str) {
+  const keyedBlocks = getKeyedBlockChars();
+  const keyedBlockToIndex = Object.fromEntries(
+    keyedBlocks.map((b, i) => [b, i])
+  );
+
   const bitsPerChar = Math.ceil(Math.log2(allowedChars.length));
-  const bitsPerBlock = Math.floor(Math.log2(blockChars.length));
+  const bitsPerBlock = Math.floor(Math.log2(keyedBlocks.length));
 
   let bitBuffer = 0;
   let bitLength = 0;
@@ -121,13 +183,12 @@ function decodeFromBlocks(blockString) {
     bitLength = 0;
   }
 
-  for (const b of blockString) {
-    const val = blockToIndex[b];
+  for (const c of str) {
+    const val = keyedBlockToIndex[c];
 
     if (val === undefined) {
-      // Flush pending decoded bits BEFORE passthrough
       flush();
-      result += b;
+      result += c;
       continue;
     }
 
@@ -136,41 +197,40 @@ function decodeFromBlocks(blockString) {
 
     while (bitLength >= bitsPerChar) {
       bitLength -= bitsPerChar;
-      const charIndex =
-        (bitBuffer >> bitLength) & ((1 << bitsPerChar) - 1);
-      result += allowedChars[charIndex];
+      const idx =
+        (bitBuffer >> bitLength) &
+        ((1 << bitsPerChar) - 1);
+      result += allowedChars[idx];
     }
   }
 
   return result;
 }
 
-// --- DOM Elements ---
+// ================= UI =================
+
 const textInput = document.getElementById("textInput");
 const encodedOutput = document.getElementById("encodedOutput");
 const decodedOutput = document.getElementById("decodedOutput");
-const encodeBtn = document.getElementById("encodeBtn");
-const decodeBtn = document.getElementById("decodeBtn");
 
-// --- Event Listeners ---
-encodeBtn.addEventListener("click", () => {
-  try {
-    const encoded = encodeToBlocks(textInput.value);
-    encodedOutput.value = encoded;
-    decodedOutput.value = "";
-  } catch(e) {
-    alert(e.message);
-  }
-});
+document.getElementById("encodeBtn").onclick = () => {
+  encodedOutput.value = encodeToBlocks(textInput.value);
+};
 
-decodeBtn.addEventListener("click", () => {
-  try {
-    const decoded = decodeFromBlocks(encodedOutput.value);
-    decodedOutput.value = decoded;
-  } catch(e) {
-    alert(e.message);
-  }
-});
+document.getElementById("decodeBtn").onclick = () => {
+  decodedOutput.value = decodeFromBlocks(encodedOutput.value);
+};
+
+document.getElementById("copyEncodedBtn").onclick = () => {
+  encodedOutput.select();
+  document.execCommand("copy");
+};
+
+document.getElementById("copyDecodedBtn").onclick = () => {
+  decodedOutput.select();
+  document.execCommand("copy");
+};
+
 </script>
 
 </body>
