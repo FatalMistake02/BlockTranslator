@@ -200,10 +200,8 @@ const DICT = [
   "is","it","al","ar","st","to","nt","ng","se","ha","as","ou","io","le","ve","co",
 
   // suffixes
-  "ing ","tion","ment","ness","able","less","ful","ous","ive","ity","est","ant","ent",
+  "ing ","tion", "ness ", "ive","ity ",
 
-  // prefixes
-  "un","re","dis","pre","over","under","sub","inter","non",
 
   // common short words
   "the","and","for","you","with","this","that","have","from","they","your","were",
@@ -214,6 +212,13 @@ const DICT = [
 ].sort(function(a, b) {
   return b.length - a.length;
 });
+
+const setsForHuffman = [
+  "e","t","a","o","i","n","s","h","r","d","l","c",
+  "u","m","w","f","g","y","p","b","v","k","j","x","q","z",
+
+  "er", "e ", "ing ", "th", "he", " and "
+]
 
 // map allowed chars to small ints
 const allowedChars =
@@ -298,6 +303,68 @@ function detokenize(tokens) {
 
 // ================= BITPACK =================
 
+// Build a deterministic Huffman code for entries listed in `setsForHuffman`.
+// The codebook is derived only from the `setsForHuffman` array (stable order)
+// so encoder and decoder can reconstruct it without transmitting the table.
+function buildDeterministicHuffmanMap() {
+  // map set-entry -> single token (only include entries that tokenize to a single token)
+  const entries = [];
+  for (let i = 0; i < setsForHuffman.length; i++) {
+    const s = setsForHuffman[i];
+    const toks = tokenize(s);
+    if (toks.length !== 1) continue; // skip multi-token entries
+    const token = toks[0];
+    if (token < 0) continue; // skip literal-only
+    entries.push({ token, weight: setsForHuffman.length - i }); // heavier weight for earlier (more frequent)
+  }
+
+  if (entries.length === 0) return { byToken: new Map(), byLen: new Map(), maxLen: 0 };
+
+  // single-entry: assign a 1-bit code so marker+code is unambiguous
+  if (entries.length === 1) {
+    const byToken = new Map();
+    byToken.set(entries[0].token, { code: 0, len: 1 });
+    const byLen = new Map([[1, new Map([[0, entries[0].token]])]]);
+    return { byToken, byLen, maxLen: 1 };
+  }
+
+  // build Huffman tree (deterministic because weights are deterministic)
+  const nodes = entries.map(e => ({ token: e.token, w: e.weight }));
+  while (nodes.length > 1) {
+    nodes.sort((a,b) => a.w - b.w || (a.token || 0) - (b.token || 0));
+    const a = nodes.shift();
+    const b = nodes.shift();
+    nodes.push({ left: a, right: b, w: a.w + b.w });
+  }
+
+  const root = nodes[0];
+  const byToken = new Map();
+
+  function walk(n, codeInt, len) {
+    if (!n) return;
+    if (n.token !== undefined) {
+      byToken.set(n.token, { code: codeInt, len });
+      return;
+    }
+    // left -> 0, right -> 1 (MSB-first)
+    walk(n.left, (codeInt << 1) | 0, len + 1);
+    walk(n.right, (codeInt << 1) | 1, len + 1);
+  }
+
+  walk(root, 0, 0);
+
+  // invert into maps by length for fast prefix matching during decode
+  const byLen = new Map();
+  let maxLen = 0;
+  for (const [token, { code, len }] of byToken.entries()) {
+    if (!byLen.has(len)) byLen.set(len, new Map());
+    byLen.get(len).set(code, token);
+    if (len > maxLen) maxLen = len;
+  }
+
+  return { byToken, byLen, maxLen };
+}
+
 async function encodeToBlocks(input) {
   const keyed = await getKeyedBlockChars();
 
@@ -307,16 +374,30 @@ async function encodeToBlocks(input) {
   const bitsPerToken = Math.ceil(Math.log2(maxToken));
   const bitsPerBlock = Math.floor(Math.log2(keyed.length));
 
+  // deterministic Huffman map (reconstructed by decoder)
+  const hmap = buildDeterministicHuffmanMap();
+
   let buf = 0n;
   let bits = 0n;
   let out = "";
 
+  const writeBits = (value, n) => {
+    // write `n` bits of `value`, MSB-first
+    if (n === 0) return;
+    buf = (buf << BigInt(n)) | BigInt(value & ((1 << n) - 1));
+    bits += BigInt(n);
+    while (bits >= BigInt(bitsPerBlock)) {
+      bits -= BigInt(bitsPerBlock);
+      out += keyed[Number((buf >> bits) & BigInt((1 << bitsPerBlock) - 1))];
+    }
+  };
+
   for (const t of tokens) {
     if (t < 0) {
-      // flush
+      // flush partial buffer and emit literal
       while (bits >= BigInt(bitsPerBlock)) {
         bits -= BigInt(bitsPerBlock);
-        out += keyed[Number((buf >> bits) & BigInt((1<<bitsPerBlock)-1))];
+        out += keyed[Number((buf >> bits) & BigInt((1 << bitsPerBlock) - 1))];
       }
       buf = 0n;
       bits = 0n;
@@ -324,17 +405,20 @@ async function encodeToBlocks(input) {
       continue;
     }
 
-    buf = (buf << BigInt(bitsPerToken)) | BigInt(t);
-    bits += BigInt(bitsPerToken);
-
-    while (bits >= BigInt(bitsPerBlock)) {
-      bits -= BigInt(bitsPerBlock);
-      out += keyed[Number((buf >> bits) & BigInt((1<<bitsPerBlock)-1))];
+    const h = hmap.byToken.get(t);
+    if (h) {
+      // 1-bit marker + variable-length Huffman code
+      writeBits(1, 1);
+      writeBits(h.code, h.len);
+    } else {
+      // 0-bit marker + fixed-width token
+      writeBits(0, 1);
+      writeBits(t, bitsPerToken);
     }
   }
 
   if (bits > 0n) {
-    out += keyed[Number((buf << (BigInt(bitsPerBlock)-bits)) & BigInt((1<<bitsPerBlock)-1))];
+    out += keyed[Number((buf << (BigInt(bitsPerBlock) - bits)) & BigInt((1 << bitsPerBlock) - 1))];
   }
 
   return out;
@@ -348,17 +432,75 @@ async function decodeFromBlocks(str) {
   const bitsPerToken = Math.ceil(Math.log2(maxToken));
   const bitsPerBlock = Math.floor(Math.log2(keyed.length));
 
+  const hmap = buildDeterministicHuffmanMap();
+
   let buf = 0n;
   let bits = 0n;
   const tokens = [];
 
+  // helper to attempt consuming encoded units from the current buf/bits
+  function tryConsumeFromBuffer() {
+    // we will operate on a shadow pointer so we only commit when a full unit is available
+    let shadowBits = bits;
+    while (true) {
+      // need at least 1 bit for the Huffman marker
+      if (shadowBits < 1n) return false;
+      // peek the marker (MSB-first)
+      const marker = Number((buf >> (shadowBits - 1n)) & 1n);
+
+      if (marker === 0) {
+        // need 1 + bitsPerToken bits total
+        if (shadowBits < 1n + BigInt(bitsPerToken)) return false;
+        // consume marker
+        shadowBits -= 1n;
+        // extract token
+        const token = Number((buf >> (shadowBits - BigInt(bitsPerToken))) & BigInt((1 << bitsPerToken) - 1));
+        shadowBits -= BigInt(bitsPerToken);
+        // commit
+        bits = shadowBits;
+        tokens.push(token);
+        continue; // try to consume more
+      }
+
+      // marker === 1 -> Huffman code follows (variable length)
+      // we need to try lengths up to hmap.maxLen; if not enough bits yet, wait for more input
+      let matched = false;
+      let acc = 0;
+      // we will only read ahead if there are enough bits to form at least one code length
+      for (let l = 1; l <= hmap.maxLen; l++) {
+        if (shadowBits < 1n + BigInt(l)) break; // not enough bits to test length l
+        // peek the l-th bit (we haven't consumed the marker yet here in the peek)
+        // compute acc from the next `l` bits after the marker
+        let accVal = 0;
+        for (let k = 0; k < l; k++) {
+          const bitPos = Number(shadowBits - 1n - BigInt(k));
+          const b = Number((buf >> BigInt(bitPos)) & 1n);
+          accVal = (accVal << 1) | b;
+        }
+        const mp = hmap.byLen.get(l);
+        if (mp && mp.has(accVal)) {
+          // we have a match; commit consumption: marker + l bits
+          shadowBits -= 1n; // marker
+          shadowBits -= BigInt(l);
+          bits = shadowBits;
+          tokens.push(mp.get(accVal));
+          matched = true;
+          break;
+        }
+      }
+
+      if (!matched) return false; // need more bits to decide
+    }
+  }
+
   for (const c of str) {
     if (!(c in map)) {
-      // literal passthrough
-      while (bits >= BigInt(bitsPerToken)) {
-        bits -= BigInt(bitsPerToken);
-        tokens.push(Number((buf>>bits)&BigInt((1<<bitsPerToken)-1)));
-      }
+      // literal passthrough: commit any full tokens we can, then flush remainder and emit literal
+      // (decoder mirrors encoder behavior)
+      // try to consume any whole units first
+      tryConsumeFromBuffer();
+
+      // reset buffer (partial bits cannot cross a literal in this format)
       buf = 0n;
       bits = 0n;
       tokens.push(-c.codePointAt(0));
@@ -368,10 +510,8 @@ async function decodeFromBlocks(str) {
     buf = (buf << BigInt(bitsPerBlock)) | BigInt(map[c]);
     bits += BigInt(bitsPerBlock);
 
-    while (bits >= BigInt(bitsPerToken)) {
-      bits -= BigInt(bitsPerToken);
-      tokens.push(Number((buf>>bits)&BigInt((1<<bitsPerToken)-1)));
-    }
+    // repeatedly consume as many encoded units as possible
+    tryConsumeFromBuffer();
   }
 
   return detokenize(tokens);
